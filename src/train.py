@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-df", type=int, default=2, help="Minimum document frequency.")
     parser.add_argument("--max-df", type=float, default=0.9, help="Maximum document frequency.")
     parser.add_argument("--sample-size", type=int, default=None, help="Batasi jumlah data untuk percobaan cepat.")
+    parser.add_argument(
+        "--balance",
+        action="store_true",
+        help="Undersampling data train agar jumlah tiap kelas sentimen seimbang.",
+    )
     parser.add_argument("--no-stemming", action="store_true", help="Matikan stemming Sastrawi.")
     return parser.parse_args()
 
@@ -130,6 +135,33 @@ def preprocess_with_progress(
     return pd.Series(cleaned_reviews, index=texts.index)
 
 
+def balance_training_data(
+    x_train_text: pd.Series,
+    y_train: pd.Series,
+    random_state: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Undersample majority classes in the training split only."""
+    train_data = pd.DataFrame({"clean_review": x_train_text, "sentiment": y_train})
+    class_counts = train_data["sentiment"].value_counts()
+    min_count = int(class_counts.min())
+
+    balanced_parts = [
+        group.sample(n=min_count, random_state=random_state)
+        for _, group in train_data.groupby("sentiment")
+    ]
+    balanced = pd.concat(balanced_parts).sample(frac=1, random_state=random_state)
+
+    print("Training class distribution before balance:")
+    print(class_counts.to_string())
+    print("Training class distribution after balance:")
+    print(balanced["sentiment"].value_counts().to_string())
+
+    return (
+        balanced["clean_review"].reset_index(drop=True),
+        balanced["sentiment"].reset_index(drop=True),
+    )
+
+
 def save_confusion_matrix(y_test, predictions, output_path: Path) -> None:
     labels = [label for label in SENTIMENT_ORDER if label in set(y_test) | set(predictions)]
     matrix = confusion_matrix(y_test, predictions, labels=labels)
@@ -155,24 +187,33 @@ def main() -> None:
     reports_dir.mkdir(parents=True, exist_ok=True)
     processed_dir.mkdir(parents=True, exist_ok=True)
 
+    print(f"Loading dataset: {args.data}")
     data, review_column, target_source_column = load_reviews_dataset(
         args.data,
         review_column=args.review_column,
         label_column=args.label_column,
         rating_column=args.rating_column,
     )
+    print(f"Loaded {len(data):,} valid reviews.")
 
     if args.sample_size:
+        print(f"Sampling {min(args.sample_size, len(data)):,} reviews for quick experiment.")
         data = sample_data(data, args.sample_size, args.random_state)
 
-    data["clean_review"] = preprocess_series(data["review_text"], use_stemming=use_stemming)
+    print(f"Preprocessing text. Stemming: {'on' if use_stemming else 'off'}")
+    data["clean_review"] = preprocess_with_progress(
+        data["review_text"],
+        use_stemming=use_stemming,
+    )
     data = data[data["clean_review"].str.strip().ne("")].reset_index(drop=True)
     if data["sentiment"].nunique() < 2:
         raise ValueError("Training membutuhkan minimal 2 kelas sentimen.")
 
     data.to_csv(processed_dir / "cleaned_reviews.csv", index=False)
+    print(f"Saved cleaned data: {processed_dir / 'cleaned_reviews.csv'}")
 
     stratify = data["sentiment"] if data["sentiment"].value_counts().min() >= 2 else None
+    print("Splitting train/test data.")
     x_train_text, x_test_text, y_train, y_test = train_test_split(
         data["clean_review"],
         data["sentiment"],
@@ -181,12 +222,20 @@ def main() -> None:
         stratify=stratify,
     )
 
+    if args.balance:
+        x_train_text, y_train = balance_training_data(
+            x_train_text,
+            y_train,
+            args.random_state,
+        )
+
     vectorizer = TfidfVectorizer(
         max_features=args.max_features,
         ngram_range=(1, 2),
         min_df=args.min_df,
         max_df=args.max_df,
     )
+    print("Fitting TF-IDF vectorizer.")
     x_train = vectorizer.fit_transform(x_train_text)
     x_test = vectorizer.transform(x_test_text)
 
@@ -198,8 +247,10 @@ def main() -> None:
     best_f1 = -1.0
 
     for name, model in trained_models.items():
+        print(f"Training model: {name}")
         model.fit(x_train, y_train)
         result = evaluate_model(model, x_test, y_test)
+        print(f"{name} F1 macro: {result['f1_macro']:.4f}")
         rows.append(
             {
                 "model": name,
@@ -233,6 +284,7 @@ def main() -> None:
         "review_column": review_column,
         "target_source_column": target_source_column,
         "use_stemming": use_stemming,
+        "balance": args.balance,
         "labels": labels,
         "rows_total": int(len(data)),
         "rows_train": int(len(x_train_text)),
