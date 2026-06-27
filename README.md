@@ -116,7 +116,7 @@ Tiga model baseline yang dilatih:
 - Logistic Regression
 - Linear SVM
 
-Model terbaik dari eksperimen final adalah **Linear SVM**.
+Model terbaik dari eksperimen MVP terbaru adalah **Multinomial Naive Bayes** dengan partial balancing `--max-majority-ratio 3`.
 
 ## Struktur Folder
 
@@ -133,6 +133,7 @@ tokopedia-review-sentiment/
 │   ├── __init__.py
 │   ├── preprocessing.py
 │   ├── train.py
+│   ├── tune.py
 │   ├── predict.py
 │   └── utils.py
 ├── models/
@@ -220,12 +221,41 @@ py -m src.train --max-majority-ratio 3
 
 File `reports/error_analysis.csv` berisi review pada data test yang salah diprediksi oleh model terbaik. File ini dipakai untuk analisis manual kasus `Negatif`/`Netral` yang masih tertukar.
 
+## Tuning
+
+Jalankan tuning ringan dengan validation split:
+
+```bash
+py -m src.tune --max-majority-ratio 3
+```
+
+Output tuning:
+
+```text
+data/processed/tuning_cleaned_reviews.csv
+reports/tuning_results.csv
+reports/tuned_classification_report.txt
+reports/tuned_confusion_matrix.png
+reports/tuned_error_analysis.csv
+models/tuned_model.pkl
+models/tuned_tfidf_vectorizer.pkl
+models/tuned_metadata.json
+```
+
+Script tuning memilih hyperparameter berdasarkan validation F1 macro, lalu melakukan evaluasi final sekali pada test set. Artefak tuning disimpan sebagai `tuned_*` agar tidak menimpa model final MVP di `models/best_model.pkl`.
+
+Untuk smoke test tuning cepat:
+
+```bash
+py -m src.tune --sample-size 5000 --limit-combinations 4
+```
+
 ## Testing
 
 Jalankan test dasar dari root repo:
 
 ```bash
-python -m unittest discover
+py -m unittest discover -s tests
 ```
 
 ## Prediksi
