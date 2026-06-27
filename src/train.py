@@ -57,6 +57,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Undersampling data train agar jumlah tiap kelas sentimen seimbang.",
     )
+    parser.add_argument(
+        "--max-majority-ratio",
+        type=float,
+        default=None,
+        help=(
+            "Batasi kelas mayoritas di data train maksimal N kali kelas minoritas. "
+            "Contoh: 3 berarti kelas Positif maksimal 3x kelas terkecil."
+        ),
+    )
     parser.add_argument("--no-stemming", action="store_true", help="Matikan stemming Sastrawi.")
     return parser.parse_args()
 
@@ -139,14 +148,19 @@ def balance_training_data(
     x_train_text: pd.Series,
     y_train: pd.Series,
     random_state: int,
+    max_majority_ratio: float = 1.0,
 ) -> tuple[pd.Series, pd.Series]:
     """Undersample majority classes in the training split only."""
+    if max_majority_ratio < 1:
+        raise ValueError("--max-majority-ratio harus bernilai minimal 1.")
+
     train_data = pd.DataFrame({"clean_review": x_train_text, "sentiment": y_train})
     class_counts = train_data["sentiment"].value_counts()
     min_count = int(class_counts.min())
+    max_count = int(round(min_count * max_majority_ratio))
 
     balanced_parts = [
-        group.sample(n=min_count, random_state=random_state)
+        group.sample(n=min(len(group), max_count), random_state=random_state)
         for _, group in train_data.groupby("sentiment")
     ]
     balanced = pd.concat(balanced_parts).sample(frac=1, random_state=random_state)
@@ -160,6 +174,26 @@ def balance_training_data(
         balanced["clean_review"].reset_index(drop=True),
         balanced["sentiment"].reset_index(drop=True),
     )
+
+
+def save_error_analysis(
+    data: pd.DataFrame,
+    y_test: pd.Series,
+    predictions,
+    output_path: Path,
+) -> None:
+    """Save misclassified test rows for manual error analysis."""
+    error_data = pd.DataFrame(
+        {
+            "actual": y_test,
+            "predicted": predictions,
+            "review_text": data.loc[y_test.index, "review_text"],
+            "clean_review": data.loc[y_test.index, "clean_review"],
+        }
+    )
+    error_data = error_data[error_data["actual"] != error_data["predicted"]]
+    error_data = error_data.sort_values(["actual", "predicted", "review_text"])
+    error_data.to_csv(output_path, index=False)
 
 
 def save_confusion_matrix(y_test, predictions, output_path: Path) -> None:
@@ -179,6 +213,7 @@ def save_confusion_matrix(y_test, predictions, output_path: Path) -> None:
 def main() -> None:
     args = parse_args()
     use_stemming = not args.no_stemming
+    max_majority_ratio = 1.0 if args.balance else args.max_majority_ratio
 
     models_dir = DEFAULT_MODELS_DIR
     reports_dir = DEFAULT_REPORTS_DIR
@@ -222,11 +257,12 @@ def main() -> None:
         stratify=stratify,
     )
 
-    if args.balance:
+    if max_majority_ratio is not None:
         x_train_text, y_train = balance_training_data(
             x_train_text,
             y_train,
             args.random_state,
+            max_majority_ratio=max_majority_ratio,
         )
 
     vectorizer = TfidfVectorizer(
@@ -274,6 +310,7 @@ def main() -> None:
     report = classification_report(y_test, best_predictions, labels=labels, zero_division=0)
     (reports_dir / "classification_report.txt").write_text(report, encoding="utf-8")
     save_confusion_matrix(y_test, best_predictions, reports_dir / "confusion_matrix.png")
+    save_error_analysis(data, y_test, best_predictions, reports_dir / "error_analysis.csv")
 
     joblib.dump(best_model, models_dir / "best_model.pkl")
     joblib.dump(vectorizer, models_dir / "tfidf_vectorizer.pkl")
@@ -285,6 +322,7 @@ def main() -> None:
         "target_source_column": target_source_column,
         "use_stemming": use_stemming,
         "balance": args.balance,
+        "max_majority_ratio": max_majority_ratio,
         "labels": labels,
         "rows_total": int(len(data)),
         "rows_train": int(len(x_train_text)),
@@ -306,6 +344,7 @@ def main() -> None:
     print(f"Best F1 macro: {best_f1:.4f}")
     print(f"Model comparison: {reports_dir / 'model_comparison.csv'}")
     print(f"Confusion matrix: {reports_dir / 'confusion_matrix.png'}")
+    print(f"Error analysis: {reports_dir / 'error_analysis.csv'}")
     print(f"Saved model: {models_dir / 'best_model.pkl'}")
 
 

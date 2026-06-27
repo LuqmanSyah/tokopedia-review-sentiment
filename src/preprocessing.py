@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import string
+from html import unescape
 from functools import lru_cache
 from typing import Iterable
 
@@ -12,14 +13,47 @@ from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
 
-_PUNCT_TRANSLATION = str.maketrans("", "", string.punctuation)
+_PUNCT_TRANSLATION = str.maketrans({punctuation: " " for punctuation in string.punctuation})
+
+SENTIMENT_PRESERVE_WORDS = {
+    "belum",
+    "bukan",
+    "jangan",
+    "kurang",
+    "namun",
+    "sesuai",
+    "tak",
+    "tapi",
+    "tidak",
+}
+
+SLANG_NORMALIZATION = {
+    "brg": "barang",
+    "bgt": "banget",
+    "bangettt": "banget",
+    "bgtt": "banget",
+    "dg": "dengan",
+    "dgn": "dengan",
+    "ga": "tidak",
+    "gada": "tidak ada",
+    "gak": "tidak",
+    "gaada": "tidak ada",
+    "gk": "tidak",
+    "ngak": "tidak",
+    "ngga": "tidak",
+    "nggak": "tidak",
+    "tdk": "tidak",
+    "tp": "tapi",
+    "yg": "yang",
+}
 
 
 @lru_cache(maxsize=1)
 def get_stopwords() -> set[str]:
     """Return Indonesian stopwords from Sastrawi."""
     factory = StopWordRemoverFactory()
-    return set(factory.get_stop_words())
+    stopwords = set(factory.get_stop_words())
+    return stopwords - SENTIMENT_PRESERVE_WORDS
 
 
 @lru_cache(maxsize=1)
@@ -28,12 +62,21 @@ def get_stemmer():
     return StemmerFactory().create_stemmer()
 
 
+def normalize_slang_tokens(tokens: Iterable[str]) -> list[str]:
+    """Normalize common Indonesian informal tokens used in product reviews."""
+    normalized_tokens = []
+    for token in tokens:
+        replacement = SLANG_NORMALIZATION.get(token, token)
+        normalized_tokens.extend(replacement.split())
+    return normalized_tokens
+
+
 def clean_text(text: object, use_stemming: bool = True) -> str:
     """Clean, tokenize, remove stopwords, and optionally stem review text."""
     if pd.isna(text):
         return ""
 
-    text = str(text).lower()
+    text = unescape(str(text)).lower()
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"\d+", " ", text)
     text = text.translate(_PUNCT_TRANSLATION)
@@ -41,7 +84,8 @@ def clean_text(text: object, use_stemming: bool = True) -> str:
     text = re.sub(r"\s+", " ", text).strip()
 
     stopwords = get_stopwords()
-    tokens = [token for token in text.split() if token not in stopwords]
+    tokens = normalize_slang_tokens(text.split())
+    tokens = [token for token in tokens if token not in stopwords]
 
     if use_stemming and tokens:
         return get_stemmer().stem(" ".join(tokens))

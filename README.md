@@ -10,25 +10,27 @@ Proyek ini menggunakan pipeline NLP tradisional: text preprocessing, TF-IDF, mod
 
 ## Ringkasan Hasil
 
-Model terbaik pada eksperimen MVP:
+Model terbaik pada eksperimen MVP terbaru menggunakan preprocessing sentiment-aware dan partial balancing `--max-majority-ratio 3`:
 
 | Metric | Nilai |
 | --- | ---: |
-| Best model | Linear SVM |
-| Accuracy | 0.9583 |
-| Precision macro | 0.4913 |
-| Recall macro | 0.5327 |
-| F1 macro | 0.5087 |
+| Best model | Multinomial Naive Bayes |
+| Accuracy | 0.9652 |
+| Precision macro | 0.5231 |
+| Recall macro | 0.5317 |
+| F1 macro | 0.5272 |
 
 Perbandingan model:
 
 | Model | Accuracy | Precision Macro | Recall Macro | F1 Macro |
 | --- | ---: | ---: | ---: | ---: |
-| Linear SVM | 0.9583 | 0.4913 | 0.5327 | 0.5087 |
-| Logistic Regression | 0.9041 | 0.4141 | 0.5914 | 0.4457 |
-| Multinomial Naive Bayes | 0.9729 | 0.6576 | 0.3354 | 0.3329 |
+| Multinomial Naive Bayes | 0.9652 | 0.5231 | 0.5317 | 0.5272 |
+| Linear SVM | 0.8997 | 0.4219 | 0.6306 | 0.4575 |
+| Logistic Regression | 0.8696 | 0.4114 | 0.6622 | 0.4404 |
 
 Catatan: accuracy terlihat tinggi karena dataset sangat didominasi review positif. Karena itu model final dipilih berdasarkan **F1 macro**, bukan accuracy.
+
+Angka di atas adalah hasil eksperimen tersimpan terakhir. Jika preprocessing atau opsi balancing diubah, jalankan training ulang dan pakai output terbaru di folder `reports/`.
 
 ## Dataset
 
@@ -73,6 +75,7 @@ Alur utama proyek:
 
 Preprocessing teks dilakukan di `src/preprocessing.py`:
 
+- Decode HTML entity, misalnya `&amp;`
 - Lowercase
 - Hapus URL
 - Hapus angka
@@ -80,7 +83,9 @@ Preprocessing teks dilakukan di `src/preprocessing.py`:
 - Hapus karakter selain huruf dan spasi
 - Hapus whitespace berlebih
 - Tokenisasi sederhana
+- Normalisasi slang umum, misalnya `gak`, `nggak`, `tdk` menjadi `tidak`
 - Stopword removal bahasa Indonesia menggunakan Sastrawi
+- Pertahankan kata negasi/kontras penting seperti `tidak`, `bukan`, `jangan`, `kurang`, dan `tapi`
 - Stemming bahasa Indonesia menggunakan Sastrawi
 
 Preprocessing yang sama digunakan saat training dan prediksi.
@@ -137,6 +142,7 @@ tokopedia-review-sentiment/
 ├── reports/
 │   ├── classification_report.txt
 │   ├── confusion_matrix.png
+│   ├── error_analysis.csv
 │   └── model_comparison.csv
 ├── requirements.txt
 ├── README.md
@@ -185,6 +191,7 @@ models/metadata.json
 reports/model_comparison.csv
 reports/classification_report.txt
 reports/confusion_matrix.png
+reports/error_analysis.csv
 ```
 
 Untuk percobaan cepat:
@@ -203,6 +210,22 @@ Untuk eksperimen balancing dengan random undersampling pada data train:
 
 ```bash
 py -m src.train --balance
+```
+
+Untuk eksperimen partial balancing, misalnya kelas mayoritas maksimal 3x kelas minoritas:
+
+```bash
+py -m src.train --max-majority-ratio 3
+```
+
+File `reports/error_analysis.csv` berisi review pada data test yang salah diprediksi oleh model terbaik. File ini dipakai untuk analisis manual kasus `Negatif`/`Netral` yang masih tertukar.
+
+## Testing
+
+Jalankan test dasar dari root repo:
+
+```bash
+python -m unittest discover
 ```
 
 ## Prediksi
@@ -233,15 +256,19 @@ Eksperimen yang sudah dicoba:
 
 | Eksperimen | Best Model | F1 Macro | Catatan |
 | --- | --- | ---: | --- |
-| Baseline dengan stemming | Linear SVM | 0.5087 | Hasil terbaik MVP |
+| Preprocessing sentiment-aware + partial balancing `--max-majority-ratio 3` | Multinomial Naive Bayes | 0.5272 | Hasil terbaik sementara |
+| Baseline awal dengan stemming | Linear SVM | 0.5087 | Kuat, tetapi kalah dari partial balancing ratio 3 |
 | Tanpa stemming | Linear SVM | 0.4830 | Lebih rendah dari baseline |
+| Partial balancing `--max-majority-ratio 5` | Multinomial Naive Bayes | 0.4711 | Terlalu condong kembali ke kelas mayoritas |
 | Full undersampling `--balance` | Multinomial Naive Bayes | 0.3912 | Terlalu banyak data positif dibuang |
 
 Kesimpulan eksperimen:
 
 - Stemming membantu performa pada dataset ini.
-- Full undersampling belum cocok untuk hasil final.
-- Model final MVP menggunakan baseline dengan stemming dan tanpa `--balance`.
+- Menjaga kata negasi dan normalisasi slang sederhana membantu pipeline sentiment.
+- Partial balancing ratio 3 lebih baik daripada baseline awal dan ratio 5.
+- Full undersampling belum cocok karena terlalu banyak data positif dibuang.
+- Model final MVP sementara menggunakan Multinomial Naive Bayes dengan `--max-majority-ratio 3`.
 
 ## Notebook
 
@@ -257,7 +284,7 @@ Beberapa batasan MVP:
 
 - Dataset sangat tidak seimbang dan didominasi kelas Positif.
 - Performa kelas Negatif dan Netral masih lebih rendah dibanding kelas Positif.
-- Normalisasi slang/kata informal Indonesia belum ditambahkan.
+- Normalisasi slang/kata informal Indonesia masih terbatas pada daftar awal.
 - Belum ada tuning hyperparameter mendalam.
 - Belum ada model transformer seperti IndoBERT.
 
@@ -265,8 +292,8 @@ Beberapa batasan MVP:
 
 Prioritas improvement berikutnya:
 
-1. Tambahkan normalisasi slang Indonesia, misalnya `ga`, `gak`, `nggak` menjadi `tidak`.
-2. Coba partial balancing, misalnya kelas Positif dibatasi maksimal 3x jumlah kelas minoritas.
+1. Perluas kamus normalisasi slang Indonesia berdasarkan `reports/error_analysis.csv`.
+2. Tambahkan dukungan `--experiment-name` atau `--output-dir` agar hasil eksperimen tidak saling overwrite.
 3. Tuning parameter Linear SVM dan Logistic Regression.
 4. Analisis error untuk review Negatif dan Netral.
 5. Coba dataset pembanding untuk menguji generalisasi model.
