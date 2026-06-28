@@ -32,6 +32,13 @@ Catatan: accuracy terlihat tinggi karena dataset sangat didominasi review positi
 
 Angka di atas adalah hasil eksperimen tersimpan terakhir. Jika preprocessing atau opsi balancing diubah, jalankan training ulang dan pakai output terbaru di folder `reports/`.
 
+Eksperimen tambahan binary sentiment (`Positif` vs `Negatif`, tanpa kelas `Netral`) memberi hasil lebih stabil:
+
+| Task | Best Model | Accuracy | Precision Macro | Recall Macro | F1 Macro |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 3-class sentiment | Multinomial Naive Bayes | 0.9652 | 0.5231 | 0.5317 | 0.5272 |
+| Binary sentiment | Multinomial Naive Bayes | 0.9822 | 0.6947 | 0.7774 | 0.7284 |
+
 ## Dataset
 
 Dataset utama:
@@ -133,6 +140,7 @@ tokopedia-review-sentiment/
 │   ├── __init__.py
 │   ├── preprocessing.py
 │   ├── train.py
+│   ├── train_binary.py
 │   ├── tune.py
 │   ├── predict.py
 │   └── utils.py
@@ -221,6 +229,59 @@ py -m src.train --max-majority-ratio 3
 
 File `reports/error_analysis.csv` berisi review pada data test yang salah diprediksi oleh model terbaik. File ini dipakai untuk analisis manual kasus `Negatif`/`Netral` yang masih tertukar.
 
+## Eksperimen Binary
+
+Kelas `Netral` pada dataset berisi banyak review campuran, misalnya review dengan rating sedang tetapi teksnya memiliki sinyal negatif atau positif kuat. Untuk pembanding yang lebih stabil, proyek ini menyediakan eksperimen binary sentiment dengan membuang kelas `Netral` dan hanya melatih:
+
+- Positif
+- Negatif
+
+Jalankan binary training:
+
+```bash
+py -m src.train_binary --max-majority-ratio 3
+```
+
+Output binary training:
+
+```text
+data/processed/binary_cleaned_reviews.csv
+models/binary_model.pkl
+models/binary_tfidf_vectorizer.pkl
+models/binary_metadata.json
+reports/binary_model_comparison.csv
+reports/binary_classification_report.txt
+reports/binary_confusion_matrix.png
+reports/binary_error_analysis.csv
+```
+
+Prediksi memakai model binary:
+
+```bash
+py -m src.predict --model models/binary_model.pkl --vectorizer models/binary_tfidf_vectorizer.pkl --metadata models/binary_metadata.json "barang rusak dan pengiriman lama"
+```
+
+Eksperimen binary digunakan sebagai pembanding kualitas model. Pipeline utama tetap 3 kelas karena tujuan awal proyek adalah klasifikasi `Positif`, `Netral`, dan `Negatif`.
+
+Hasil binary experiment:
+
+| Metric | Nilai |
+| --- | ---: |
+| Best model | Multinomial Naive Bayes |
+| Accuracy | 0.9822 |
+| Precision macro | 0.6947 |
+| Recall macro | 0.7774 |
+| F1 macro | 0.7284 |
+
+Performa per kelas binary:
+
+| Kelas | Precision | Recall | F1-score | Support |
+| --- | ---: | ---: | ---: | ---: |
+| Negatif | 0.40 | 0.57 | 0.47 | 157 |
+| Positif | 0.99 | 0.99 | 0.99 | 11277 |
+
+Hasil binary lebih stabil karena kelas `Netral` yang ambigu dikeluarkan. Namun kelas `Negatif` tetap jauh lebih sedikit daripada `Positif`, sehingga precision negatif masih rendah.
+
 ## Tuning
 
 Jalankan tuning ringan dengan validation split:
@@ -286,6 +347,7 @@ Eksperimen yang sudah dicoba:
 
 | Eksperimen | Best Model | F1 Macro | Catatan |
 | --- | --- | ---: | --- |
+| Binary sentiment tanpa kelas `Netral` | Multinomial Naive Bayes | 0.7284 | Pembanding praktis Positif vs Negatif |
 | Preprocessing sentiment-aware + partial balancing `--max-majority-ratio 3` | Multinomial Naive Bayes | 0.5272 | Hasil terbaik sementara |
 | Baseline awal dengan stemming | Linear SVM | 0.5087 | Kuat, tetapi kalah dari partial balancing ratio 3 |
 | Tanpa stemming | Linear SVM | 0.4830 | Lebih rendah dari baseline |
@@ -299,6 +361,7 @@ Kesimpulan eksperimen:
 - Partial balancing ratio 3 lebih baik daripada baseline awal dan ratio 5.
 - Full undersampling belum cocok karena terlalu banyak data positif dibuang.
 - Model final MVP sementara menggunakan Multinomial Naive Bayes dengan `--max-majority-ratio 3`.
+- Eksperimen binary jauh lebih stabil daripada 3-class, tetapi diposisikan sebagai pembanding karena objective utama tetap 3 kelas.
 
 ## Notebook
 
@@ -314,6 +377,7 @@ Beberapa batasan MVP:
 
 - Dataset sangat tidak seimbang dan didominasi kelas Positif.
 - Performa kelas Negatif dan Netral masih lebih rendah dibanding kelas Positif.
+- Error analysis menunjukkan kelas Netral ambigu karena banyak review rating/label Netral memiliki teks campuran atau polaritas kuat.
 - Normalisasi slang/kata informal Indonesia masih terbatas pada daftar awal.
 - Belum ada tuning hyperparameter mendalam.
 - Belum ada model transformer seperti IndoBERT.
@@ -324,6 +388,6 @@ Prioritas improvement berikutnya:
 
 1. Perluas kamus normalisasi slang Indonesia berdasarkan `reports/error_analysis.csv`.
 2. Tambahkan dukungan `--experiment-name` atau `--output-dir` agar hasil eksperimen tidak saling overwrite.
-3. Tuning parameter Linear SVM dan Logistic Regression.
-4. Analisis error untuk review Negatif dan Netral.
+3. Bandingkan hasil 3-class dan binary sentiment dari sisi use case.
+4. Tuning parameter Linear SVM dan Logistic Regression.
 5. Coba dataset pembanding untuk menguji generalisasi model.
